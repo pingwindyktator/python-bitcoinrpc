@@ -171,6 +171,17 @@ class AuthServiceProxy(object):
             self.__conn = httplib.HTTPConnection(self.__url.hostname, port,
                                                  timeout=timeout)
 
+    def __reinit_conn(self):
+        try:
+            if self.__url.scheme == 'https':
+                self.__conn = httplib.HTTPSConnection(self.__url.hostname, self.__url.port,
+                                                      timeout=self.__timeout)
+            else:
+                self.__conn = httplib.HTTPConnection(self.__url.hostname, self.__url.port,
+                                                     timeout=self.__timeout)
+        except Exception as e:
+            log.error("%s: %s" % (type(e).__name__, e))
+
     def __getattr__(self, name):
         if name.startswith('__') and name.endswith('__'):
             # Python internal stuff
@@ -180,10 +191,19 @@ class AuthServiceProxy(object):
         return AuthServiceProxy(self.__service_url, name, self.__timeout, self.__conn)
 
     def __call__(self, *args):
+        try:
+            return self.__call(*args)
+        except (BrokenPipeError, httplib.CannotSendRequest):
+            self.__reinit_conn()
+            return self.__call__(*args)
+        except Exception as e:
+            log.error("%s: %s" % (type(e).__name__, e))
+
+    def __call(self, *args):
         AuthServiceProxy.__id_count += 1
 
-        log.debug("-%s-> %s %s"%(AuthServiceProxy.__id_count, self.__service_name,
-                                 json.dumps(args, default=EncodeDecimal)))
+        log.debug("-%s-> %s %s" % (AuthServiceProxy.__id_count, self.__service_name,
+                                   json.dumps(args, default=EncodeDecimal)))
         postdata = json.dumps({'version': '1.1',
                                'method': self.__service_name,
                                'params': args,
@@ -213,10 +233,10 @@ class AuthServiceProxy(object):
         for rpc_call in rpc_calls:
             AuthServiceProxy.__id_count += 1
             m = rpc_call.pop(0)
-            batch_data.append({"jsonrpc":"2.0", "method":m, "params":rpc_call, "id":AuthServiceProxy.__id_count})
+            batch_data.append({"jsonrpc": "2.0", "method": m, "params": rpc_call, "id": AuthServiceProxy.__id_count})
 
         postdata = json.dumps(batch_data, default=EncodeDecimal)
-        log.debug("--> "+postdata)
+        log.debug("--> " + postdata)
         self.__conn.request('POST', self.__url.path, postdata,
                             {'Host': self.__url.hostname,
                              'User-Agent': USER_AGENT,
@@ -224,11 +244,6 @@ class AuthServiceProxy(object):
                              'Content-type': 'application/json'})
         results = []
         responses = self._get_response()
-        if isinstance(responses, (dict,)):
-            if ('error' in responses) and (responses['error'] is not None):
-                raise JSONRPCException(responses['error'])
-            raise JSONRPCException({
-                'code': -32700, 'message': 'Parse error'})
         for response in responses:
             if response['error'] is not None:
                 raise JSONRPCException(response['error'])
@@ -253,7 +268,7 @@ class AuthServiceProxy(object):
         responsedata = http_response.read().decode('utf8')
         response = json.loads(responsedata, parse_float=decimal.Decimal)
         if "error" in response and response["error"] is None:
-            log.debug("<-%s- %s"%(response["id"], json.dumps(response["result"], default=EncodeDecimal)))
+            log.debug("<-%s- %s" % (response["id"], json.dumps(response["result"], default=EncodeDecimal)))
         else:
-            log.debug("<-- "+responsedata)
+            log.debug("<-- " + responsedata)
         return response
