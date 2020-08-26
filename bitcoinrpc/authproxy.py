@@ -42,6 +42,7 @@ import base64
 import decimal
 import json
 import logging
+
 try:
     import urllib.parse as urlparse
 except ImportError:
@@ -52,6 +53,7 @@ USER_AGENT = "AuthServiceProxy/0.1"
 HTTP_TIMEOUT = 30
 
 log = logging.getLogger("BitcoinRPC")
+
 
 class JSONRPCException(Exception):
     def __init__(self, rpc_error):
@@ -76,6 +78,62 @@ def EncodeDecimal(o):
     if isinstance(o, decimal.Decimal):
         return float(round(o, 8))
     raise TypeError(repr(o) + " is not JSON serializable")
+
+
+def ApiResponse(v):
+    import simplejson
+
+    class _ApiResponseDict(dict):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+
+        def __str__(self):
+            return simplejson.dumps(self, indent=4)
+
+        def __repr__(self):
+            return str(self)
+
+    class _ApiResponseList(list):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+
+        def __str__(self):
+            return simplejson.dumps(self, indent=4)
+
+        def __repr__(self):
+            return str(self)
+
+    class _ApiResponseDecimal(decimal.Decimal):
+        def __new__(cls, value):
+            return decimal.Decimal.__new__(cls, value)
+
+        def __str__(self):
+            return str('{:f}'.format(self.normalize()))
+
+        def __repr__(self):
+            return str(self)
+
+    class _ApiResponseStr(str):
+        def __new__(cls, value):
+            return super().__new__(cls, value)
+
+        def __repr__(self):
+            return str(self)
+
+    if isinstance(v, dict):
+        return _ApiResponseDict({k: ApiResponse(vv) for k, vv in v.items()})
+
+    elif isinstance(v, list):
+        return _ApiResponseList([ApiResponse(vv) for vv in v])
+
+    elif isinstance(v, decimal.Decimal):
+        return _ApiResponseDecimal(v)
+
+    elif isinstance(v, str):
+        return _ApiResponseStr(v)
+
+    return v
+
 
 class AuthServiceProxy(object):
     __id_count = 0
@@ -143,8 +201,8 @@ class AuthServiceProxy(object):
         elif 'result' not in response:
             raise JSONRPCException({
                 'code': -343, 'message': 'missing JSON-RPC result'})
-        
-        return response['result']
+
+        return ApiResponse(response['result'])
 
     def batch_(self, rpc_calls):
         """Batch RPC call.
